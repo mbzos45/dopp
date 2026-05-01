@@ -1,5 +1,5 @@
-# Created by https://www.toptal.com/developers/gitignore/api/windows,macos,linux,archlinuxpackages,visualstudiocode,visualstudio,intellij+iml,node,yarn,rust,python,rust-analyzer,cmake,asdf,zig,eclipse,ninja,meson
-# Edit at https://www.toptal.com/developers/gitignore?templates=windows,macos,linux,archlinuxpackages,visualstudiocode,visualstudio,intellij+iml,node,yarn,rust,python,rust-analyzer,cmake,asdf,zig,eclipse,ninja,meson
+# Created by https://www.toptal.com/developers/gitignore/api/windows,macos,linux,archlinuxpackages,visualstudiocode,visualstudio,intellij+iml,node,yarn,rust,python,rust-analyzer,cmake,asdf,zig,eclipse,ninja,meson,svelte
+# Edit at https://www.toptal.com/developers/gitignore?templates=windows,macos,linux,archlinuxpackages,visualstudiocode,visualstudio,intellij+iml,node,yarn,rust,python,rust-analyzer,cmake,asdf,zig,eclipse,ninja,meson,svelte
 
 ### ArchLinuxPackages ###
 *.tar
@@ -591,6 +591,13 @@ Cargo.lock
 rust-project.json
 
 
+### Svelte ###
+# gitignore template for the SvelteKit, frontend web component framework
+# website: https://kit.svelte.dev/
+
+.svelte-kit/
+package
+
 ### VisualStudioCode ###
 .vscode/*
 !.vscode/settings.json
@@ -1045,4 +1052,4 @@ FodyWeavers.xsd
 ### VisualStudio Patch ###
 # Additional files built by Visual Studio
 
-# End of https://www.toptal.com/developers/gitignore/api/windows,macos,linux,archlinuxpackages,visualstudiocode,visualstudio,intellij+iml,node,yarn,rust,python,rust-analyzer,cmake,asdf,zig,eclipse,ninja,meson
+# End of https://www.toptal.com/developers/gitignore/api/windows,macos,linux,archlinuxpackages,visualstudiocode,visualstudio,intellij+iml,node,yarn,rust,python,rust-analyzer,cmake,asdf,zig,eclipse,ninja,meson,svelte
