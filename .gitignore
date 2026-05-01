@@ -1,20 +1,5 @@
-# Created by https://www.toptal.com/developers/gitignore/api/windows,macos,linux,archlinuxpackages,visualstudiocode,visualstudio,intellij+iml,node,yarn,rust,python,rust-analyzer,cmake,asdf,zig,eclipse,ninja,meson,svelte
-# Edit at https://www.toptal.com/developers/gitignore?templates=windows,macos,linux,archlinuxpackages,visualstudiocode,visualstudio,intellij+iml,node,yarn,rust,python,rust-analyzer,cmake,asdf,zig,eclipse,ninja,meson,svelte
-
-### ArchLinuxPackages ###
-*.tar
-*.tar.*
-*.jar
-*.exe
-*.msi
-*.zip
-*.tgz
-*.log
-*.log.*
-*.sig
-
-pkg/
-src/
+# Created by https://www.toptal.com/developers/gitignore/api/windows,macos,linux,visualstudiocode,visualstudio,intellij+iml,node,yarn,rust,python,rust-analyzer,cmake,asdf,zig,eclipse,ninja,meson,svelte
+# Edit at https://www.toptal.com/developers/gitignore?templates=windows,macos,linux,visualstudiocode,visualstudio,intellij+iml,node,yarn,rust,python,rust-analyzer,cmake,asdf,zig,eclipse,ninja,meson,svelte
 
 ### asdf ###
 /.tool-versions
