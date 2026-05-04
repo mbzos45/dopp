@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte'
+  import { onDestroy, onMount, tick } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
   import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
   import { writeText } from '@tauri-apps/plugin-clipboard-manager'
@@ -14,6 +14,7 @@
   let copiedId = ''
   let maxContainerCount = 0
   let hasInitialResize = false
+  const refreshIntervalMs = 10000
 
   const windowHandle = getCurrentWindow()
 
@@ -189,14 +190,29 @@
     await windowHandle.close()
   }
 
+  const startAutoRefresh = () => {
+    if (typeof window === 'undefined') {
+      return null
+    }
+    const intervalId = window.setInterval(() => {
+      void refresh()
+    }, refreshIntervalMs)
+    return () => window.clearInterval(intervalId)
+  }
+
+  const stopAutoRefresh = startAutoRefresh()
+
   onMount(refresh)
+  onDestroy(() => {
+    if (stopAutoRefresh) {
+      stopAutoRefresh()
+    }
+  })
 </script>
 
 <main class="app">
   <div class="controls">
-    <button class="button ghost" on:click={refresh} disabled={$containersLoading}>
-      {$containersLoading ? 'Refreshing...' : 'Refresh'}
-    </button>
+    <button class="button ghost" on:click={refresh}>Refresh</button>
     <button class="button danger" on:click={closeWindow}>Close</button>
   </div>
 
