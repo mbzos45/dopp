@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { invoke } from '@tauri-apps/api/core'
+  import { getCurrentWindow, LogicalSize } from '@tauri-apps/api/window'
   import { writeText } from '@tauri-apps/plugin-clipboard-manager'
   import {
     containers,
@@ -11,6 +12,72 @@
 
   let busyIds = new Set<string>()
   let copiedId = ''
+  let maxContainerCount = 0
+  let hasInitialResize = false
+
+  const windowHandle = getCurrentWindow()
+
+  const readCssPx = (name: string, fallback: number) => {
+    if (typeof window === 'undefined') {
+      return fallback
+    }
+    const value = getComputedStyle(document.documentElement).getPropertyValue(name)
+    const parsed = Number.parseFloat(value)
+    return Number.isFinite(parsed) ? parsed : fallback
+  }
+
+  const computeWindowHeight = (count: number) => {
+    const rowHeight = readCssPx('--row-height', 56)
+    const rowGap = readCssPx('--row-gap', 8)
+    const appPadding = readCssPx('--app-padding', 16)
+    const controlsHeight = readCssPx('--controls-height', 44)
+    const emptyHeight = readCssPx('--empty-height', 64)
+    const extra = readCssPx('--window-extra', 24)
+    const listHeight =
+      count > 0
+        ? count * rowHeight + Math.max(0, count - 1) * rowGap
+        : emptyHeight
+    return appPadding * 2 + controlsHeight + listHeight + extra
+  }
+
+  const computeWindowWidth = () => readCssPx('--window-width', 760)
+
+  const measureWindowHeight = () => {
+    if (typeof window === 'undefined') {
+      return null
+    }
+    const app = document.querySelector('.app')
+    if (!app) {
+      return null
+    }
+    const extra = readCssPx('--window-extra', 24)
+    return app.getBoundingClientRect().height + extra
+  }
+
+  const applyWindowSize = async (count: number) => {
+    if (typeof window === 'undefined') {
+      return
+    }
+    await tick()
+    const measured = measureWindowHeight()
+    const targetHeight = Math.ceil(measured ?? computeWindowHeight(count))
+    const targetWidth = Math.ceil(computeWindowWidth())
+    await windowHandle.setSize(new LogicalSize(targetWidth, targetHeight))
+  }
+
+  const updateWindowSize = async (count: number) => {
+    if (!hasInitialResize) {
+      maxContainerCount = count
+      hasInitialResize = true
+      await applyWindowSize(count)
+      return
+    }
+
+    if (count > maxContainerCount) {
+      maxContainerCount = count
+      await applyWindowSize(count)
+    }
+  }
 
   const refresh = async () => {
     containersLoading.set(true)
@@ -18,6 +85,7 @@
     try {
       const data = (await invoke('list_containers')) as ContainerInfo[]
       containers.set(data)
+      await updateWindowSize(data.length)
     } catch (err) {
       containersError.set(normalizeError(err))
     } finally {
@@ -94,84 +162,95 @@
     return container.id.slice(0, 12)
   }
 
-  const shortId = (id: string) => id.slice(0, 12)
+  const formatStateLine = (container: ContainerInfo) => {
+    const status = container.status ? `Status: ${container.status}` : 'Status: -'
+    return status
+  }
+
+  const getStateClass = (state: string) => {
+    const normalized = state.trim().toLowerCase()
+    if (normalized === 'running') {
+      return 'state running'
+    }
+    if (normalized === 'exited' || normalized === 'stopped') {
+      return 'state stopped'
+    }
+    if (normalized === 'paused') {
+      return 'state paused'
+    }
+    return 'state unknown'
+  }
+
+  const formatStateLabel = (state: string) => {
+    return state ? state : 'unknown'
+  }
+
+  const closeWindow = async () => {
+    await windowHandle.close()
+  }
 
   onMount(refresh)
 </script>
 
 <main class="app">
-  <header class="top-bar">
-    <div>
-      <p class="kicker">Engine Console</p>
-      <h1>Container Control</h1>
-      <p class="subtitle">Start, stop, and copy exec commands in one place.</p>
-    </div>
-    <div class="toolbar">
-      <button class="button ghost" on:click={refresh} disabled={$containersLoading}>
-        {$containersLoading ? 'Refreshing...' : 'Refresh'}
-      </button>
-    </div>
-  </header>
+  <div class="controls">
+    <button class="button ghost" on:click={refresh} disabled={$containersLoading}>
+      {$containersLoading ? 'Refreshing...' : 'Refresh'}
+    </button>
+    <button class="button danger" on:click={closeWindow}>Close</button>
+  </div>
 
   {#if $containersError}
     <section class="alert">{$containersError}</section>
   {/if}
 
-  <section class="panel">
-    <div class="panel-header">
-      <h2>Containers</h2>
-      <span class="count">{$containers.length} total</span>
-    </div>
+  <section class="list">
+    {#if $containers.length === 0 && !$containersLoading}
+      <div class="empty">No containers found.</div>
+    {/if}
 
-    <div class="list">
-      {#if $containers.length === 0 && !$containersLoading}
-        <div class="empty">No containers found.</div>
-      {/if}
-
-      {#each $containers as container, index (container.id)}
-        <article class="row" style={`--delay: ${index * 30}ms`}>
+    {#each $containers as container (container.id)}
+      <article class="row">
+        <div class="container-info">
+          <div class="name">{formatName(container)}</div>
           <div class="meta">
-            <div class="name">{formatName(container)}</div>
-            <div class="detail">
-              <span class={`state ${container.state}`}>{container.state}</span>
-              <span class="dot"></span>
-              <span class="image">{container.image}</span>
-              <span class="dot"></span>
-              <span class="id">{shortId(container.id)}</span>
-            </div>
+            <span class={getStateClass(container.state)}>
+              {formatStateLabel(container.state)}
+            </span>
+            <span class="status">{formatStateLine(container)}</span>
           </div>
-          <div class="actions">
-            <button
-              class="button"
-              on:click={() => runAction('start_container', container.id)}
-              disabled={busyIds.has(container.id)}
-            >
-              Start
-            </button>
-            <button
-              class="button"
-              on:click={() => runAction('stop_container', container.id)}
-              disabled={busyIds.has(container.id)}
-            >
-              Stop
-            </button>
-            <button
-              class="button"
-              on:click={() => runAction('restart_container', container.id)}
-              disabled={busyIds.has(container.id)}
-            >
-              Restart
-            </button>
-            <button
-              class="button ghost"
-              on:click={() => copyExec(container.id)}
-              disabled={busyIds.has(container.id)}
-            >
-              {copiedId === container.id ? 'Copied' : 'Copy exec'}
-            </button>
-          </div>
-        </article>
-      {/each}
-    </div>
+        </div>
+        <div class="actions">
+          <button
+            class="button"
+            on:click={() => runAction('start_container', container.id)}
+            disabled={busyIds.has(container.id)}
+          >
+            Start
+          </button>
+          <button
+            class="button"
+            on:click={() => runAction('stop_container', container.id)}
+            disabled={busyIds.has(container.id)}
+          >
+            Stop
+          </button>
+          <button
+            class="button"
+            on:click={() => runAction('restart_container', container.id)}
+            disabled={busyIds.has(container.id)}
+          >
+            Restart
+          </button>
+          <button
+            class="button ghost"
+            on:click={() => copyExec(container.id)}
+            disabled={busyIds.has(container.id)}
+          >
+            {copiedId === container.id ? 'Copied' : 'Copy exec'}
+          </button>
+        </div>
+      </article>
+    {/each}
   </section>
 </main>
