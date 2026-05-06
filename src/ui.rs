@@ -1,17 +1,19 @@
 use eframe::egui;
-use log::error;
+use log::{error, info};
 
-use crate::docker::{ContainerInfo, DockerClient};
+use crate::docker::DockerClient;
+use bollard::config::ContainerSummary;
+use bollard::config::ContainerSummaryStateEnum;
 
-pub const WINDOW_WIDTH: f32 = 520.0;
-pub const DEFAULT_HEIGHT: f32 = 240.0;
+pub const WINDOW_WIDTH: f32 = 420.0;
+pub const DEFAULT_HEIGHT: f32 = 80.0;
 const HEADER_HEIGHT: f32 = 32.0;
-const ROW_HEIGHT: f32 = 28.0;
+const ROW_HEIGHT: f32 = 15.0;
 const WINDOW_PADDING: f32 = 24.0;
 
 pub struct MyApp {
     docker: DockerClient,
-    containers: Vec<ContainerInfo>,
+    containers: Vec<ContainerSummary>,
     error: Option<String>,
     window_height: f32,
     pending_resize: Option<f32>,
@@ -36,6 +38,7 @@ impl MyApp {
             Ok(containers) => {
                 self.error = None;
                 self.containers = containers;
+                info!("Found {} containers", self.containers.len());
                 self.update_window_height();
             }
             Err(err) => {
@@ -47,8 +50,7 @@ impl MyApp {
 
     fn update_window_height(&mut self) {
         let target_height =
-            (HEADER_HEIGHT + ROW_HEIGHT * self.containers.len() as f32 + WINDOW_PADDING)
-                .max(200.0);
+            (HEADER_HEIGHT + ROW_HEIGHT * self.containers.len() as f32 + WINDOW_PADDING).max(200.0);
         if self.window_height == 0.0 || target_height > self.window_height {
             self.window_height = target_height;
             self.pending_resize = Some(target_height);
@@ -61,6 +63,7 @@ impl MyApp {
             self.error = Some(format!("Failed to start container: {err}"));
             return;
         }
+        info!("Started container: {id}");
         self.refresh_containers();
     }
 
@@ -79,6 +82,7 @@ impl MyApp {
             self.error = Some(format!("Failed to restart container: {err}"));
             return;
         }
+        info!("Restarted container: {id}");
         self.refresh_containers();
     }
 }
@@ -109,31 +113,47 @@ impl eframe::App for MyApp {
 
             let containers = self.containers.clone();
             for container in containers {
-                let is_stopped = matches!(container.state.as_str(), "exited" | "dead" | "created");
+                let Some(id) = &container.id else {
+                    error!("Failed to get container ID");
+                    continue;
+                };
+                let Some(state) = container.state else {
+                    error!("Failed to get container state");
+                    continue;
+                };
+                let name = container.names.unwrap_or_default()
+                    .get(0)
+                    .map(|value| value.trim_start_matches('/').to_string())
+                    .unwrap_or_else(|| id.chars().take(12).collect());
+
+                let is_stopped = matches!(state, ContainerSummaryStateEnum::EXITED | ContainerSummaryStateEnum::DEAD | ContainerSummaryStateEnum::CREATED);
                 let mut action: Option<ContainerAction> = None;
                 ui.horizontal(|ui| {
                     if ui.button("stop").clicked() {
-                        action = Some(ContainerAction::Stop(container.id.clone()));
+                        action = Some(ContainerAction::Stop(id.clone()));
                     }
                     if ui.button("start").clicked() {
-                        action = Some(ContainerAction::Start(container.id.clone()));
+                        action = Some(ContainerAction::Start(id.clone()));
                     }
                     if !is_stopped {
                         if ui.button("restart").clicked() {
-                            action = Some(ContainerAction::Restart(container.id.clone()));
+                            action = Some(ContainerAction::Restart(id.clone()));
                         }
-                        let _ = ui.button(" "); // exec placeholder
+                        let _ = ui.button("exec"); // exec placeholder
+                    } else {
+                        let _ = ui.button("             ");
+                        let _ = ui.button("         ");
                     }
-
-                    let color = match container.state.as_str() {
-                        "running" => egui::Color32::LIGHT_GREEN,
-                        "exited" => egui::Color32::LIGHT_RED,
-                        _ => egui::Color32::KHAKI,
-                    };
-                    ui.colored_label(color, &container.state);
-                    ui.label(&container.name);
+                    ui.label(name);
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let color = match state {
+                            ContainerSummaryStateEnum::RUNNING => egui::Color32::LIGHT_GREEN,
+                            ContainerSummaryStateEnum::EXITED => egui::Color32::LIGHT_RED,
+                            _ => egui::Color32::KHAKI,
+                        };
+                        ui.colored_label(color, state.as_ref());
+                    });
                 });
-
                 if let Some(action) = action {
                     match action {
                         ContainerAction::Start(id) => self.start_container(&id),
@@ -147,7 +167,7 @@ impl eframe::App for MyApp {
 }
 
 #[derive(Clone, Debug)]
-enum ContainerAction {
+enum ContainerAction<> {
     Start(String),
     Stop(String),
     Restart(String),

@@ -14,7 +14,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "dopp",
+        env!("CARGO_PKG_NAME"),
         options,
         Box::new(|_| Ok(Box::new(MyApp::new()))),
     )

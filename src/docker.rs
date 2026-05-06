@@ -3,13 +3,7 @@ use bollard::query_parameters::{
     StopContainerOptionsBuilder,
 };
 use bollard::Docker;
-
-#[derive(Clone, Debug)]
-pub struct ContainerInfo {
-    pub id: String,
-    pub name: String,
-    pub state: String,
-}
+use bollard::config::ContainerSummary;
 
 pub struct DockerClient {
     docker: Option<Docker>,
@@ -26,7 +20,7 @@ impl DockerClient {
         Self { docker, runtime }
     }
 
-    pub fn list_containers(&self) -> Result<Vec<ContainerInfo>, String> {
+    pub fn list_containers(&self) -> Result<Vec<ContainerSummary>, String> {
         let docker = self
             .docker
             .as_ref()
@@ -69,23 +63,7 @@ impl DockerClient {
     }
 }
 
-async fn list_containers(docker: &Docker) -> Result<Vec<ContainerInfo>, bollard::errors::Error> {
+async fn list_containers(docker: &Docker) -> Result<Vec<ContainerSummary>, bollard::errors::Error> {
     let options = ListContainersOptionsBuilder::default().all(true).build();
-    let containers = docker.list_containers(Some(options)).await?;
-    let mut result = Vec::new();
-    for container in containers {
-        let id = container.id.unwrap_or_default();
-        let name = container
-            .names
-            .unwrap_or_default()
-            .get(0)
-            .map(|value| value.trim_start_matches('/').to_string())
-            .unwrap_or_else(|| id.chars().take(12).collect());
-        let state = container
-            .state
-            .map(|value| value.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-        result.push(ContainerInfo { id, name, state });
-    }
-    Ok(result)
+    Ok(docker.list_containers(Some(options)).await?)
 }
