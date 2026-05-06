@@ -1,9 +1,11 @@
 use eframe::egui;
 use log::{error, info};
+use std::collections::HashSet;
 
-use crate::docker::DockerClient;
+use crate::docker::{ContainerActionKind, DockerRunner, UiEvent};
 use bollard::config::ContainerSummary;
 use bollard::config::ContainerSummaryStateEnum;
+use crossbeam_channel::Receiver;
 
 pub const WINDOW_WIDTH: f32 = 420.0;
 pub const DEFAULT_HEIGHT: f32 = 80.0;
@@ -12,38 +14,67 @@ const ROW_HEIGHT: f32 = 15.0;
 const WINDOW_PADDING: f32 = 24.0;
 
 pub struct MyApp {
-    docker: DockerClient,
+    runner: DockerRunner,
+    events: Receiver<UiEvent>,
     containers: Vec<ContainerSummary>,
     error: Option<String>,
     window_height: f32,
     pending_resize: Option<f32>,
+    loading_containers: HashSet<String>,
+    needs_initial_refresh: bool,
 }
 
 impl MyApp {
     pub fn new() -> Self {
-        let docker = DockerClient::new();
-        let mut app = Self {
-            docker,
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let runner = DockerRunner::new(tx);
+        Self {
+            runner,
+            events: rx,
             containers: Vec::new(),
             error: None,
             window_height: 0.0,
             pending_resize: None,
-        };
-        app.refresh_containers();
-        app
+            loading_containers: HashSet::new(),
+            needs_initial_refresh: true,
+        }
     }
 
-    fn refresh_containers(&mut self) {
-        match self.docker.list_containers() {
-            Ok(containers) => {
-                self.error = None;
-                self.containers = containers;
-                info!("Found {} containers", self.containers.len());
-                self.update_window_height();
-            }
-            Err(err) => {
-                error!("failed to list containers: {err}");
-                self.error = Some(format!("Failed to list containers: {err}"));
+    fn spawn_refresh(&self, ctx: &egui::Context) {
+        self.runner.spawn_refresh(ctx.clone());
+    }
+
+    fn spawn_action(&mut self, action: ContainerActionKind, id: String, ctx: &egui::Context) {
+        self.loading_containers.insert(id.clone());
+        self.runner.spawn_action(id, action, ctx.clone());
+    }
+
+    fn drain_events(&mut self) {
+        let events: Vec<UiEvent> = self.events.try_iter().collect();
+        for event in events {
+            match event {
+                UiEvent::ContainersRefreshed(result) => match result {
+                    Ok(containers) => {
+                        self.error = None;
+                        self.containers = containers;
+                        info!("Found {} containers", self.containers.len());
+                        self.update_window_height();
+                    }
+                    Err(err) => {
+                        error!("failed to list containers: {err}");
+                        self.error = Some(format!("Failed to list containers: {err}"));
+                    }
+                },
+                UiEvent::ContainerActionFinished { id, action, result } => {
+                    self.loading_containers.remove(&id);
+                    if let Err(err) = result {
+                        error!("failed to {} container: {err}", action.as_str());
+                        self.error = Some(format!(
+                            "Failed to {} container: {err}",
+                            action.as_str()
+                        ));
+                    }
+                }
             }
         }
     }
@@ -56,39 +87,17 @@ impl MyApp {
             self.pending_resize = Some(target_height);
         }
     }
-
-    fn start_container(&mut self, id: &str) {
-        if let Err(err) = self.docker.start_container(id) {
-            error!("failed to start container: {err}");
-            self.error = Some(format!("Failed to start container: {err}"));
-            return;
-        }
-        info!("Started container: {id}");
-        self.refresh_containers();
-    }
-
-    fn stop_container(&mut self, id: &str) {
-        if let Err(err) = self.docker.stop_container(id) {
-            error!("failed to stop container: {err}");
-            self.error = Some(format!("Failed to stop container: {err}"));
-            return;
-        }
-        self.refresh_containers();
-    }
-
-    fn restart_container(&mut self, id: &str) {
-        if let Err(err) = self.docker.restart_container(id) {
-            error!("failed to restart container: {err}");
-            self.error = Some(format!("Failed to restart container: {err}"));
-            return;
-        }
-        info!("Restarted container: {id}");
-        self.refresh_containers();
-    }
 }
 
 impl eframe::App for MyApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        if self.needs_initial_refresh {
+            self.spawn_refresh(ui.ctx());
+            self.needs_initial_refresh = false;
+        }
+
+        self.drain_events();
+
         if let Some(height) = self.pending_resize.take() {
             ui.ctx()
                 .send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
@@ -103,7 +112,7 @@ impl eframe::App for MyApp {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
                 if ui.button("refresh").clicked() {
-                    self.refresh_containers();
+                    self.spawn_refresh(ui.ctx());
                 }
             });
 
@@ -121,30 +130,51 @@ impl eframe::App for MyApp {
                     error!("Failed to get container state");
                     continue;
                 };
-                let name = container.names.unwrap_or_default()
+                let name = container
+                    .names
+                    .unwrap_or_default()
                     .get(0)
                     .map(|value| value.trim_start_matches('/').to_string())
                     .unwrap_or_else(|| id.chars().take(12).collect());
 
-                let is_stopped = matches!(state, ContainerSummaryStateEnum::EXITED | ContainerSummaryStateEnum::DEAD | ContainerSummaryStateEnum::CREATED);
-                let mut action: Option<ContainerAction> = None;
+                let is_stopped = matches!(
+                    state,
+                    ContainerSummaryStateEnum::EXITED
+                        | ContainerSummaryStateEnum::DEAD
+                        | ContainerSummaryStateEnum::CREATED
+                );
+                let is_loading = self.loading_containers.contains(id);
+                let mut action: Option<ContainerActionKind> = None;
                 ui.horizontal(|ui| {
-                    if ui.button("stop").clicked() {
-                        action = Some(ContainerAction::Stop(id.clone()));
+                    if ui
+                        .add_enabled(!is_loading, egui::Button::new("stop"))
+                        .clicked()
+                    {
+                        action = Some(ContainerActionKind::Stop);
                     }
-                    if ui.button("start").clicked() {
-                        action = Some(ContainerAction::Start(id.clone()));
+                    if ui
+                        .add_enabled(!is_loading, egui::Button::new("start"))
+                        .clicked()
+                    {
+                        action = Some(ContainerActionKind::Start);
                     }
                     if !is_stopped {
-                        if ui.button("restart").clicked() {
-                            action = Some(ContainerAction::Restart(id.clone()));
+                        if ui
+                            .add_enabled(!is_loading, egui::Button::new("restart"))
+                            .clicked()
+                        {
+                            action = Some(ContainerActionKind::Restart);
                         }
-                        let _ = ui.button("exec"); // exec placeholder
+                        let _ = ui.add_enabled(!is_loading, egui::Button::new("exec"));
                     } else {
-                        let _ = ui.button("             ");
-                        let _ = ui.button("         ");
+                        let _ = ui.add_enabled(false, egui::Button::new("             "));
+                        let _ = ui.add_enabled(false, egui::Button::new("         "));
                     }
-                    ui.label(name);
+                    if is_loading {
+                        ui.label(format!("{name} (loading)"));
+                    } else {
+                        ui.label(name);
+                    }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let color = match state {
                             ContainerSummaryStateEnum::RUNNING => egui::Color32::LIGHT_GREEN,
@@ -155,20 +185,9 @@ impl eframe::App for MyApp {
                     });
                 });
                 if let Some(action) = action {
-                    match action {
-                        ContainerAction::Start(id) => self.start_container(&id),
-                        ContainerAction::Stop(id) => self.stop_container(&id),
-                        ContainerAction::Restart(id) => self.restart_container(&id),
-                    }
+                    self.spawn_action(action, id.clone(), ui.ctx());
                 }
             }
         });
     }
-}
-
-#[derive(Clone, Debug)]
-enum ContainerAction<> {
-    Start(String),
-    Stop(String),
-    Restart(String),
 }
