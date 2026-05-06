@@ -1,9 +1,10 @@
+use anyhow::{Context, Result};
+use bollard::Docker;
+use bollard::config::ContainerSummary;
 use bollard::query_parameters::{
     ListContainersOptionsBuilder, RestartContainerOptionsBuilder, StartContainerOptions,
     StopContainerOptionsBuilder,
 };
-use bollard::Docker;
-use bollard::config::ContainerSummary;
 
 pub struct DockerClient {
     docker: Option<Docker>,
@@ -20,50 +21,48 @@ impl DockerClient {
         Self { docker, runtime }
     }
 
-    pub fn list_containers(&self) -> Result<Vec<ContainerSummary>, String> {
+    pub fn list_containers(&self) -> Result<Vec<ContainerSummary>> {
         let docker = self
             .docker
             .as_ref()
-            .ok_or_else(|| "Docker connection is unavailable".to_string())?;
-        self.runtime
-            .block_on(list_containers(docker))
-            .map_err(|err| err.to_string())
+            .context("Docker connection is unavailable")?;
+        self.runtime.block_on(list_containers(docker))
     }
 
-    pub fn start_container(&self, id: &str) -> Result<(), String> {
+    pub fn start_container(&self, id: &str) -> Result<()> {
         let docker = self
             .docker
             .as_ref()
-            .ok_or_else(|| "Docker connection is unavailable".to_string())?;
+            .context("Docker connection is unavailable")?;
         self.runtime
-            .block_on(docker.start_container(id, None::<StartContainerOptions>))
-            .map_err(|err| err.to_string())
+            .block_on(docker.start_container(id, None::<StartContainerOptions>))?;
+        Ok(())
     }
 
-    pub fn stop_container(&self, id: &str) -> Result<(), String> {
+    pub fn stop_container(&self, id: &str) -> Result<()> {
         let docker = self
             .docker
             .as_ref()
-            .ok_or_else(|| "Docker connection is unavailable".to_string())?;
+            .context("Docker connection is unavailable")?;
         let options = StopContainerOptionsBuilder::default().t(10).build();
         self.runtime
-            .block_on(docker.stop_container(id, Some(options)))
-            .map_err(|err| err.to_string())
+            .block_on(docker.stop_container(id, Some(options)))?;
+        Ok(())
     }
 
-    pub fn restart_container(&self, id: &str) -> Result<(), String> {
+    pub fn restart_container(&self, id: &str) -> Result<()> {
         let docker = self
             .docker
             .as_ref()
-            .ok_or_else(|| "Docker connection is unavailable".to_string())?;
+            .context("Docker connection is unavailable")?;
         let options = RestartContainerOptionsBuilder::default().t(10).build();
         self.runtime
-            .block_on(docker.restart_container(id, Some(options)))
-            .map_err(|err| err.to_string())
+            .block_on(docker.restart_container(id, Some(options)))?;
+        Ok(())
     }
 }
 
-async fn list_containers(docker: &Docker) -> Result<Vec<ContainerSummary>, bollard::errors::Error> {
+async fn list_containers(docker: &Docker) -> Result<Vec<ContainerSummary>> {
     let options = ListContainersOptionsBuilder::default().all(true).build();
     Ok(docker.list_containers(Some(options)).await?)
 }
