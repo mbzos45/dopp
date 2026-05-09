@@ -3,6 +3,7 @@
 
 mod docker;
 mod ui;
+mod terminal;
 
 use ui::{MyApp, DEFAULT_HEIGHT, WINDOW_WIDTH};
 
