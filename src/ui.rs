@@ -3,6 +3,7 @@ use log::{error, info};
 use std::collections::HashSet;
 
 use crate::docker::{ContainerActionKind, DockerRunner, UiEvent};
+use crate::terminal::{self, ExecCommand};
 use bollard::config::ContainerSummary;
 use bollard::config::ContainerSummaryStateEnum;
 use crossbeam_channel::Receiver;
@@ -145,6 +146,7 @@ impl eframe::App for MyApp {
                 );
                 let is_loading = self.loading_containers.contains(id);
                 let mut action: Option<ContainerActionKind> = None;
+                let mut exec_requested = false;
                 ui.horizontal(|ui| {
                     if ui
                         .add_enabled(!is_loading, egui::Button::new("stop"))
@@ -165,7 +167,12 @@ impl eframe::App for MyApp {
                         {
                             action = Some(ContainerActionKind::Restart);
                         }
-                        let _ = ui.add_enabled(!is_loading, egui::Button::new("exec"));
+                        if ui
+                            .add_enabled(!is_loading, egui::Button::new("exec"))
+                            .clicked()
+                        {
+                            exec_requested = true;
+                        }
                     } else {
                         let _ = ui.add_enabled(false, egui::Button::new("             "));
                         let _ = ui.add_enabled(false, egui::Button::new("         "));
@@ -173,7 +180,7 @@ impl eframe::App for MyApp {
                     if is_loading {
                         ui.label(format!("{name} (loading)"));
                     } else {
-                        ui.label(name);
+                        ui.label(&name);
                     }
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let color = match state {
@@ -186,6 +193,16 @@ impl eframe::App for MyApp {
                 });
                 if let Some(action) = action {
                     self.spawn_action(action, id.clone(), ui.ctx());
+                }
+                if exec_requested {
+                    let exec_command = ExecCommand::new(&name);
+                    if let Err(err) = terminal::launch_exec_terminal(&exec_command) {
+                        error!("exec terminal launch failed: {err}");
+                        self.error = Some(format!("Failed to launch terminal: {err}"));
+                        if let Err(clip_err) = terminal::copy_to_clipboard(&exec_command.as_string()) {
+                            error!("clipboard copy failed: {clip_err}");
+                        }
+                    }
                 }
             }
         });
