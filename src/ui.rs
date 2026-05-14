@@ -3,7 +3,7 @@ use log::{error, info};
 use std::collections::HashSet;
 
 use crate::docker::{ContainerActionKind, DockerRunner, UiEvent};
-use crate::terminal::{self, ExecCommand};
+use crate::terminal::{self, ExecCommand, ExecOptions};
 use bollard::config::ContainerSummary;
 use bollard::config::ContainerSummaryStateEnum;
 use crossbeam_channel::Receiver;
@@ -23,6 +23,22 @@ pub struct MyApp {
     pending_resize: Option<f32>,
     loading_containers: HashSet<String>,
     needs_initial_refresh: bool,
+    settings: AppSettings,
+}
+
+#[derive(Clone, Debug)]
+struct AppSettings {
+    copy_command_to_clipboard: bool,
+    inherit_xauthority_on_linux: bool,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            copy_command_to_clipboard: true,
+            inherit_xauthority_on_linux: true,
+        }
+    }
 }
 
 impl MyApp {
@@ -38,6 +54,7 @@ impl MyApp {
             pending_resize: None,
             loading_containers: HashSet::new(),
             needs_initial_refresh: true,
+            settings: AppSettings::default(),
         }
     }
 
@@ -108,6 +125,17 @@ impl eframe::App for MyApp {
         }
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
+            ui.horizontal(|ui| {
+                ui.checkbox(
+                    &mut self.settings.copy_command_to_clipboard,
+                    "copy command",
+                );
+                ui.checkbox(
+                    &mut self.settings.inherit_xauthority_on_linux,
+                    "XAUTHORITY on Linux",
+                );
+            });
+
             ui.horizontal(|ui| {
                 if ui.button("close").clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
@@ -195,11 +223,19 @@ impl eframe::App for MyApp {
                     self.spawn_action(action, id.clone(), ui.ctx());
                 }
                 if exec_requested {
-                    let exec_command = ExecCommand::new(&name);
+                    let exec_options = ExecOptions {
+                        inherit_xauthority_on_linux: self
+                            .settings
+                            .inherit_xauthority_on_linux,
+                    };
+                    let exec_command = ExecCommand::new(&name, exec_options);
+                    let exec_string = exec_command.as_string();
                     if let Err(err) = terminal::launch_exec_terminal(&exec_command) {
                         error!("exec terminal launch failed: {err}");
                         self.error = Some(format!("Failed to launch terminal: {err}"));
-                        if let Err(clip_err) = terminal::copy_to_clipboard(&exec_command.as_string()) {
+                    }
+                    if self.settings.copy_command_to_clipboard {
+                        if let Err(clip_err) = terminal::copy_to_clipboard(&exec_string) {
                             error!("clipboard copy failed: {clip_err}");
                         }
                     }

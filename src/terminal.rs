@@ -22,33 +22,50 @@ impl ContainerRuntime {
 pub struct ExecCommand {
     runtime: ContainerRuntime,
     target: String,
+    options: ExecOptions,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct ExecOptions {
+    pub inherit_xauthority_on_linux: bool,
+}
+
+impl Default for ExecOptions {
+    fn default() -> Self {
+        Self {
+            inherit_xauthority_on_linux: true,
+        }
+    }
 }
 
 impl ExecCommand {
-    pub fn new(target: &str) -> Self {
+    pub fn new(target: &str, options: ExecOptions) -> Self {
         Self {
             runtime: detect_runtime(),
             target: target.to_string(),
+            options,
         }
     }
 
     pub fn as_string(&self) -> String {
-        format!(
-            "{} exec -it {} /bin/bash",
-            self.runtime.as_str(),
-            self.target
+        build_exec_command(
+            cfg!(target_os = "linux"),
+            self.runtime,
+            &self.target,
+            &self.options,
+            env::var("XAUTHORITY").ok().as_deref(),
         )
     }
 
     #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn as_tokens(&self) -> Vec<String> {
-        vec![
-            self.runtime.as_str().to_string(),
-            "exec".to_string(),
-            "-it".to_string(),
-            self.target.clone(),
-            "/bin/bash".to_string(),
-        ]
+        build_exec_tokens(
+            cfg!(target_os = "linux"),
+            self.runtime,
+            &self.target,
+            &self.options,
+            env::var("XAUTHORITY").ok().as_deref(),
+        )
     }
 }
 
@@ -74,6 +91,71 @@ pub fn launch_exec_terminal(command: &ExecCommand) -> Result<(), String> {
 pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
     let mut clipboard = arboard::Clipboard::new().map_err(|err| err.to_string())?;
     clipboard.set_text(text.to_string()).map_err(|err| err.to_string())
+}
+
+fn build_exec_command(
+    platform_is_linux: bool,
+    runtime: ContainerRuntime,
+    target: &str,
+    options: &ExecOptions,
+    xauthority: Option<&str>,
+) -> String {
+    build_exec_tokens(platform_is_linux, runtime, target, options, xauthority)
+        .into_iter()
+        .map(|token| quote_token(&token))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn build_exec_tokens(
+    platform_is_linux: bool,
+    runtime: ContainerRuntime,
+    target: &str,
+    options: &ExecOptions,
+    xauthority: Option<&str>,
+) -> Vec<String> {
+    let mut tokens = vec![
+        runtime.as_str().to_string(),
+        "exec".to_string(),
+        "-it".to_string(),
+    ];
+
+    if let Some(value) = xauthority_env_assignment(platform_is_linux, options, xauthority) {
+        tokens.push("-e".to_string());
+        tokens.push(format!("XAUTHORITY={value}"));
+    }
+
+    tokens.push(target.to_string());
+    tokens.push("/bin/bash".to_string());
+    tokens
+}
+
+fn xauthority_env_assignment(
+    platform_is_linux: bool,
+    options: &ExecOptions,
+    xauthority: Option<&str>,
+) -> Option<String> {
+    if !platform_is_linux || !options.inherit_xauthority_on_linux {
+        return None;
+    }
+
+    let value = xauthority?.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn quote_token(token: &str) -> String {
+    if token
+        .chars()
+        .any(|character| character.is_whitespace() || character == '"' || character == '\'')
+    {
+        format!("{token:?}")
+    } else {
+        token.to_string()
+    }
 }
 
 fn detect_runtime() -> ContainerRuntime {
@@ -229,4 +311,56 @@ fn prepend_arg(arg: &str, tokens: &[String]) -> Vec<String> {
     args.push(arg.to_string());
     args.extend(tokens.iter().cloned());
     args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn xauthority_is_included_on_linux_when_enabled() {
+        let options = ExecOptions::default();
+
+        let value = xauthority_env_assignment(true, &options, Some("/tmp/.Xauthority"));
+
+        assert_eq!(value, Some("/tmp/.Xauthority".to_string()));
+    }
+
+    #[test]
+    fn xauthority_is_skipped_when_missing_or_disabled() {
+        let enabled = ExecOptions::default();
+        let disabled = ExecOptions {
+            inherit_xauthority_on_linux: false,
+        };
+
+        assert_eq!(xauthority_env_assignment(true, &enabled, None), None);
+        assert_eq!(xauthority_env_assignment(true, &enabled, Some("   ")), None);
+        assert_eq!(xauthority_env_assignment(false, &enabled, Some("/tmp/.Xauthority")), None);
+        assert_eq!(xauthority_env_assignment(true, &disabled, Some("/tmp/.Xauthority")), None);
+    }
+
+    #[test]
+    fn build_exec_command_includes_xauthority_only_when_requested() {
+        let options = ExecOptions::default();
+
+        let command = build_exec_command(
+            true,
+            ContainerRuntime::Docker,
+            "my-container",
+            &options,
+            Some("/tmp/.Xauthority"),
+        );
+
+        assert!(command.contains("-e XAUTHORITY=/tmp/.Xauthority"));
+
+        let command_without_xauthority = build_exec_command(
+            false,
+            ContainerRuntime::Docker,
+            "my-container",
+            &options,
+            Some("/tmp/.Xauthority"),
+        );
+
+        assert!(!command_without_xauthority.contains("-e XAUTHORITY="));
+    }
 }
