@@ -4,12 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.102"
-bollard = "0.21.0"
-eframe = { version = "0.34.2", default-features = false, features = ["default_fonts", "wgpu", "accesskit"] }
-egui = "0.34.2"
-env_logger = "0.11.10"
-log = "0.4.29"
-arboard = { version = "3.6.1", default-features = false }
-tokio = { version = "1.52.2", features = ["rt-multi-thread", "macros"] }
-crossbeam-channel = "0.5.15"
+anyhow = "1.0"
+arboard = { version = "3.6", default-features = false }
+bollard = { version = "0.21", default-features = false, features = ["pipe"] }
+eframe = {
+  version = "0.34",
+  default-features = false,
+  features = ["default_fonts", "accesskit", "wgpu"]
+}
+egui = "0.34"
+env_logger = "0.11"
+log = "0.4"
+tokio = { version = "1.52", features = ["macros", "rt-multi-thread", "sync"] }

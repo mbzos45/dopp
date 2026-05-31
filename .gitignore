@@ -766,3 +766,10 @@ FodyWeavers.xsd
 # Additional files built by Visual Studio
 
 # End of https://www.toptal.com/developers/gitignore/api/zig,asdf,node,rust,yarn,linux,macos,svelte,windows,intellij+iml,visualstudio,rust-analyzer,visualstudiocode
+
+tmp/
+
+.github/prompts/
+.github/skills/
+.claude/commands/
+.claude/skills/

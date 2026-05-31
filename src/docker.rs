@@ -1,17 +1,18 @@
-use anyhow::{Result};
+use anyhow::Result;
 use bollard::Docker;
 use bollard::config::ContainerSummary;
 use bollard::query_parameters::{
     ListContainersOptionsBuilder, RestartContainerOptionsBuilder, StartContainerOptions,
     StopContainerOptionsBuilder,
 };
-use crossbeam_channel::Sender;
 use egui::Context as EguiContext;
+use log::{error, info};
+use tokio::sync::mpsc;
 
 pub struct DockerRunner {
     docker: Option<Docker>,
     runtime: tokio::runtime::Runtime,
-    tx: Sender<UiEvent>,
+    tx: mpsc::UnboundedSender<UiEvent>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,7 +42,7 @@ pub enum UiEvent {
 }
 
 impl DockerRunner {
-    pub fn new(tx: Sender<UiEvent>) -> Self {
+    pub fn new(tx: mpsc::UnboundedSender<UiEvent>) -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -67,10 +68,15 @@ impl DockerRunner {
         let docker = self.docker.clone();
         let tx = self.tx.clone();
         self.runtime.spawn(async move {
+            info!("docker {} {id}", action.as_str());
             let (action_result, refresh_result) = match docker {
                 Some(docker) => {
                     let action_result =
                         run_action(&docker, &id, action).await.map_err(|err| err.to_string());
+                    match &action_result {
+                        Ok(()) => info!("docker {} {id}: ok", action.as_str()),
+                        Err(err) => error!("docker {} {id}: {err}", action.as_str()),
+                    }
                     let refresh_result =
                         list_containers(&docker).await.map_err(|err| err.to_string());
                     (action_result, refresh_result)
@@ -81,11 +87,7 @@ impl DockerRunner {
                 }
             };
 
-            let _ = tx.send(UiEvent::ContainerActionFinished {
-                id: id.clone(),
-                action,
-                result: action_result,
-            });
+            let _ = tx.send(UiEvent::ContainerActionFinished { id, action, result: action_result });
             let _ = tx.send(UiEvent::ContainersRefreshed(refresh_result));
             ctx.request_repaint();
         });
