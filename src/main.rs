@@ -256,7 +256,7 @@ impl eframe::App for MyApp {
 }
 
 fn main() -> eframe::Result {
-    let icon_data = load_icon(include_bytes!("../assets/icon_32x32.png"));
+    let icon_data = load_icon(include_bytes!("../assets/icon_256x256.png"));
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let mut options = eframe::NativeOptions {
