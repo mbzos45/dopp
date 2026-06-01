@@ -5,8 +5,10 @@ mod docker;
 mod terminal;
 
 use eframe::egui;
+use eframe::egui::IconData;
 use log::{error, info};
 use std::collections::HashSet;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 
 use crate::docker::{ContainerActionKind, DockerRunner, UiEvent};
@@ -92,10 +94,8 @@ impl MyApp {
                     self.loading_containers.remove(&id);
                     if let Err(err) = result {
                         error!("failed to {} container: {err}", action.as_str());
-                        self.error = Some(format!(
-                            "Failed to {} container: {err}",
-                            action.as_str()
-                        ));
+                        self.error =
+                            Some(format!("Failed to {} container: {err}", action.as_str()));
                     }
                 }
             }
@@ -131,10 +131,7 @@ impl eframe::App for MyApp {
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.horizontal(|ui| {
-                ui.checkbox(
-                    &mut self.settings.copy_command_to_clipboard,
-                    "copy command",
-                );
+                ui.checkbox(&mut self.settings.copy_command_to_clipboard, "copy command");
                 ui.checkbox(
                     &mut self.settings.inherit_xauthority_on_linux,
                     "XAUTHORITY on Linux",
@@ -259,15 +256,34 @@ impl eframe::App for MyApp {
 }
 
 fn main() -> eframe::Result {
+    let icon_data = load_icon(include_bytes!("../assets/icon_32x32.png"));
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    let options = eframe::NativeOptions {
+    let mut options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([WINDOW_WIDTH, DEFAULT_HEIGHT]),
         ..Default::default()
     };
+    if let Some(icon) = icon_data {
+        options.viewport.icon = Some(Arc::new(icon));
+    }
     eframe::run_native(
         env!("CARGO_PKG_NAME"),
         options,
         Box::new(|_| Ok(Box::new(MyApp::new()))),
     )
 }
+
+fn load_icon(bytes: &[u8]) -> Option<IconData> {
+    let image = match image::load_from_memory(bytes) {
+       Ok(x) => x.into_rgba8(),
+       Err(_) => return None,
+    };
+    let (width, height) = image.dimensions();
+    let rgba = image.into_raw();
+    Some(IconData {
+       rgba,
+       width,
+       height,
+    })
+ }
